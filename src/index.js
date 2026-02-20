@@ -2,7 +2,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const targetUrl = url.searchParams.get("url");
-    if (!targetUrl) return new Response("v12.0 Native UI Active", { status: 200 });
+    if (!targetUrl) return new Response("v13.0 De-Hijack Active", { status: 200 });
 
     const response = await fetch(targetUrl, {
       headers: {
@@ -11,74 +11,52 @@ export default {
       }
     });
 
-    const interceptorJS = `
-      <script>
-        // 1. Block Pop-ups
-        window.open = function() { return null; };
-
-        // 2. FORCE NATIVE CONTROLS
-        function forceNative() {
-          const video = document.querySelector('video');
-          if (video) {
-            video.setAttribute('controls', 'true'); // Show browser's own seek bar
-            video.style.display = 'block';
-            video.style.width = '100vw';
-            video.style.height = '100vh';
-            video.play().catch(() => {});
-          }
-          // Hide the broken VideoJS UI layers
-          const vjsUI = document.querySelector('.vjs-control-bar');
-          if (vjsUI) vjsUI.style.display = 'none';
-        }
-
-        window.addEventListener('load', () => setTimeout(forceNative, 100));
-        document.addEventListener('click', forceNative, { once: true });
-      </script>
-    `;
-
     const customCSS = `
       <style>
-        /* Hide ALL Sendvid UI elements to let Native Browser UI shine */
-        .vjs-control-bar, .vjs-big-play-button, .ad-overlay, #video-overlay, 
-        .video-info-link, #vjs-logo-top-bar, #vjs-logobrand { 
-          display: none !important; 
-        }
-
+        /* 1. Reset everything to black */
         body, html { margin: 0; padding: 0; background: #000; overflow: hidden; height: 100%; width: 100%; }
         
-        /* Ensure the raw video tag is visible and fills the screen */
+        /* 2. Force the video tag to be visible and interactive */
         video { 
+          display: block !important;
           width: 100vw !important; 
           height: 100vh !important; 
           object-fit: contain !important; 
-          position: absolute;
-          top: 0; left: 0;
-          z-index: 999; 
+          pointer-events: auto !important;
+        }
+
+        /* 3. Hide all Sendvid UI remnants */
+        .vjs-control-bar, .vjs-big-play-button, .ad-overlay, #video-overlay, 
+        #vjs-logo-top-bar, #vjs-logobrand, .video-info-link { 
+          display: none !important; 
+          opacity: 0 !important;
         }
       </style>
     `;
 
     const rewriter = new HTMLRewriter()
-      .on("head", { element(e) { 
-        e.prepend(interceptorJS, { html: true }); 
-        e.append(customCSS, { html: true }); 
-      }})
+      .on("head", { element(e) { e.append(customCSS, { html: true }); } })
+      // CRITICAL: Change the class so VideoJS doesn't "hijack" the player
+      .on("video", {
+        element(e) {
+          e.setAttribute("class", "video-native"); // Remove 'video-js'
+          e.setAttribute("controls", "true");      // Ensure native UI is on
+          e.setAttribute("preload", "metadata");   // Help with loading
+          e.removeAttribute("data-setup");         // Kill auto-init
+        }
+      })
       .on("script", {
         element(e) {
           let src = e.getAttribute("src") || "";
           if (src.startsWith("//")) e.setAttribute("src", "https:" + src);
           else if (src.startsWith("/")) e.setAttribute("src", "https://sendvid.com" + src);
           
-          // Whitelist only the core engine
-          const isEssential = src.includes("player") || src.includes("preflight");
-          if (!isEssential || src.includes("ads") || src.includes("clickadu")) e.remove();
-        }
-      })
-      .on("link", {
-        element(e) {
-          let href = e.getAttribute("href") || "";
-          if (href.startsWith("//")) e.setAttribute("href", "https:" + href);
-          else if (href.startsWith("/")) e.setAttribute("href", "https://sendvid.com" + href);
+          // BLOCK ALL SCRIPTS that might try to re-init the player or show ads
+          // Since we want native controls, we don't even need the Sendvid player.js
+          const isAd = src.includes("ads") || src.includes("clickadu") || src.includes("gtag") || src.includes("gukahdbam");
+          if (isAd || src.includes("player")) {
+            e.remove(); 
+          }
         }
       });
 
@@ -92,7 +70,7 @@ export default {
 
     newHeaders.set("X-Frame-Options", "ALLOWALL");
     newHeaders.delete("Content-Security-Policy");
-    newHeaders.set("X-Worker-Version", "12.0-Native-UI");
+    newHeaders.set("X-Worker-Version", "13.0-De-Hijack");
 
     return new Response(transformedResponse.body, { ...transformedResponse, headers: newHeaders });
   }
