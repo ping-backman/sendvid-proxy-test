@@ -2,7 +2,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const targetUrl = url.searchParams.get("url");
-    if (!targetUrl) return new Response("v11.0 Fail-Safe Active", { status: 200 });
+    if (!targetUrl) return new Response("v12.0 Native UI Active", { status: 200 });
 
     const response = await fetch(targetUrl, {
       headers: {
@@ -16,54 +16,45 @@ export default {
         // 1. Block Pop-ups
         window.open = function() { return null; };
 
-        // 2. Force Player Initialization
-        function startPlayer() {
+        // 2. FORCE NATIVE CONTROLS
+        function forceNative() {
           const video = document.querySelector('video');
-          const playerDiv = document.querySelector('.video-js');
-          if (video && playerDiv) {
-            // Force VideoJS classes so controls appear
-            playerDiv.classList.add('vjs-has-started', 'vjs-playing', 'vjs-user-active');
-            video.play().catch(() => {
-              console.log("Autoplay blocked, waiting for user click");
-            });
+          if (video) {
+            video.setAttribute('controls', 'true'); // Show browser's own seek bar
+            video.style.display = 'block';
+            video.style.width = '100vw';
+            video.style.height = '100vh';
+            video.play().catch(() => {});
           }
+          // Hide the broken VideoJS UI layers
+          const vjsUI = document.querySelector('.vjs-control-bar');
+          if (vjsUI) vjsUI.style.display = 'none';
         }
 
-        // Run when the page is fully loaded
-        window.addEventListener('load', () => {
-          setTimeout(startPlayer, 500); // 500ms delay to let scripts settle
-        });
-
-        // Also trigger on any click just in case
-        document.addEventListener('click', startPlayer, { once: true });
+        window.addEventListener('load', () => setTimeout(forceNative, 100));
+        document.addEventListener('click', forceNative, { once: true });
       </script>
     `;
 
     const customCSS = `
       <style>
-        /* Hide Branding & Overlays */
-        #vjs-logo-top-bar, #vjs-logobrand, .sendvid-logo, .ad-overlay, #video-overlay { 
+        /* Hide ALL Sendvid UI elements to let Native Browser UI shine */
+        .vjs-control-bar, .vjs-big-play-button, .ad-overlay, #video-overlay, 
+        .video-info-link, #vjs-logo-top-bar, #vjs-logobrand { 
           display: none !important; 
         }
 
-        /* Force Controls Visibility */
-        .vjs-control-bar { 
-          display: flex !important; 
-          opacity: 1 !important; 
-          visibility: visible !important;
-          bottom: 0 !important;
+        body, html { margin: 0; padding: 0; background: #000; overflow: hidden; height: 100%; width: 100%; }
+        
+        /* Ensure the raw video tag is visible and fills the screen */
+        video { 
+          width: 100vw !important; 
+          height: 100vh !important; 
+          object-fit: contain !important; 
+          position: absolute;
+          top: 0; left: 0;
+          z-index: 999; 
         }
-
-        /* Standard Play Button */
-        .vjs-big-play-button {
-          display: block !important;
-          top: 50% !important; left: 50% !important;
-          transform: translate(-50%, -50%) !important;
-          z-index: 10 !important;
-        }
-
-        body, html { margin: 0; padding: 0; background: #000; overflow: hidden; height: 100%; }
-        .video-js { width: 100vw !important; height: 100vh !important; }
       </style>
     `;
 
@@ -75,14 +66,12 @@ export default {
       .on("script", {
         element(e) {
           let src = e.getAttribute("src") || "";
-          // Path fixing
           if (src.startsWith("//")) e.setAttribute("src", "https:" + src);
           else if (src.startsWith("/")) e.setAttribute("src", "https://sendvid.com" + src);
-
-          // Only allow essential video engine scripts
-          const isEssential = src.includes("preflight") || src.includes("player") || src.includes("video");
-          const isAd = src.includes("clickadu") || src.includes("ads") || src.includes("gtag");
-          if (!isEssential || isAd) e.remove();
+          
+          // Whitelist only the core engine
+          const isEssential = src.includes("player") || src.includes("preflight");
+          if (!isEssential || src.includes("ads") || src.includes("clickadu")) e.remove();
         }
       })
       .on("link", {
@@ -103,7 +92,7 @@ export default {
 
     newHeaders.set("X-Frame-Options", "ALLOWALL");
     newHeaders.delete("Content-Security-Policy");
-    newHeaders.set("X-Worker-Version", "11.0-Watchdog-Fixed");
+    newHeaders.set("X-Worker-Version", "12.0-Native-UI");
 
     return new Response(transformedResponse.body, { ...transformedResponse, headers: newHeaders });
   }
