@@ -2,7 +2,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const targetUrl = url.searchParams.get("url");
-    if (!targetUrl) return new Response("v10.0 Final Touch Active", { status: 200 });
+    if (!targetUrl) return new Response("v11.0 Fail-Safe Active", { status: 200 });
 
     const response = await fetch(targetUrl, {
       headers: {
@@ -15,53 +15,55 @@ export default {
       <script>
         // 1. Block Pop-ups
         window.open = function() { return null; };
-        
-        // 2. Ensure controls become visible once the video starts playing
-        document.addEventListener('play', function(e) {
-          const player = document.querySelector('.video-js');
-          if (player) {
-            player.classList.add('vjs-has-started');
-            player.classList.remove('vjs-paused');
-            player.classList.add('vjs-playing');
+
+        // 2. Force Player Initialization
+        function startPlayer() {
+          const video = document.querySelector('video');
+          const playerDiv = document.querySelector('.video-js');
+          if (video && playerDiv) {
+            // Force VideoJS classes so controls appear
+            playerDiv.classList.add('vjs-has-started', 'vjs-playing', 'vjs-user-active');
+            video.play().catch(() => {
+              console.log("Autoplay blocked, waiting for user click");
+            });
           }
-        }, true);
+        }
+
+        // Run when the page is fully loaded
+        window.addEventListener('load', () => {
+          setTimeout(startPlayer, 500); // 500ms delay to let scripts settle
+        });
+
+        // Also trigger on any click just in case
+        document.addEventListener('click', startPlayer, { once: true });
       </script>
     `;
 
     const customCSS = `
       <style>
-        /* Hide Branding & Ads */
-        #vjs-logo-top-bar, #vjs-logobrand, .sendvid-logo, .ad-overlay, #video-overlay, .video-info-link { 
+        /* Hide Branding & Overlays */
+        #vjs-logo-top-bar, #vjs-logobrand, .sendvid-logo, .ad-overlay, #video-overlay { 
           display: none !important; 
         }
 
-        /* Restore a beautiful, centered Play Button */
-        .vjs-big-play-button {
-          display: block !important;
-          position: absolute !important;
-          top: 50% !important;
-          left: 50% !important;
-          transform: translate(-50%, -50%) !important;
-          width: 80px !important;
-          height: 80px !important;
-          line-height: 80px !important;
-          border-radius: 50% !important;
-          background-color: rgba(0, 0, 0, 0.7) !important;
-          border: 3px solid #fff !important;
-          z-index: 10 !important;
-          cursor: pointer !important;
-        }
-
-        /* Ensure the Progress Bar and Controls show up correctly */
+        /* Force Controls Visibility */
         .vjs-control-bar { 
           display: flex !important; 
-          z-index: 2147483647 !important; 
+          opacity: 1 !important; 
+          visibility: visible !important;
+          bottom: 0 !important;
         }
 
-        /* Layout fixes */
-        body, html { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #000; }
+        /* Standard Play Button */
+        .vjs-big-play-button {
+          display: block !important;
+          top: 50% !important; left: 50% !important;
+          transform: translate(-50%, -50%) !important;
+          z-index: 10 !important;
+        }
+
+        body, html { margin: 0; padding: 0; background: #000; overflow: hidden; height: 100%; }
         .video-js { width: 100vw !important; height: 100vh !important; }
-        video { object-fit: contain; }
       </style>
     `;
 
@@ -73,15 +75,14 @@ export default {
       .on("script", {
         element(e) {
           let src = e.getAttribute("src") || "";
-          // Correctly join paths for both // and /
+          // Path fixing
           if (src.startsWith("//")) e.setAttribute("src", "https:" + src);
           else if (src.startsWith("/")) e.setAttribute("src", "https://sendvid.com" + src);
 
-          // Whitelist essential scripts
+          // Only allow essential video engine scripts
           const isEssential = src.includes("preflight") || src.includes("player") || src.includes("video");
-          if (!isEssential || src.includes("clickadu") || src.includes("ads") || src.includes("gtag")) {
-             e.remove();
-          }
+          const isAd = src.includes("clickadu") || src.includes("ads") || src.includes("gtag");
+          if (!isEssential || isAd) e.remove();
         }
       })
       .on("link", {
@@ -102,7 +103,7 @@ export default {
 
     newHeaders.set("X-Frame-Options", "ALLOWALL");
     newHeaders.delete("Content-Security-Policy");
-    newHeaders.set("X-Worker-Version", "10.0-Full-UI-Restore");
+    newHeaders.set("X-Worker-Version", "11.0-Watchdog-Fixed");
 
     return new Response(transformedResponse.body, { ...transformedResponse, headers: newHeaders });
   }
