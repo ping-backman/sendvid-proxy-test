@@ -1,0 +1,6 @@
+name = "video-proxy-tester"
+main = "src/index.js"
+compatibility_date = "2024-01-01"
+
+[vars]
+TRUSTED_REFERER = "https://facebook.com"
