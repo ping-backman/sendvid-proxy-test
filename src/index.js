@@ -3,53 +3,40 @@ export default {
     const url = new URL(request.url);
     const targetUrl = url.searchParams.get("url");
 
-    if (!targetUrl) return new Response("Sendvid Proxy Active", { status: 200 });
+    if (!targetUrl) return new Response("Worker is Live v2", { status: 200 });
 
-    const modifiedHeaders = new Headers(request.headers);
-    modifiedHeaders.set("Referer", env.TRUSTED_REFERER || "https://facebook.com");
+    const response = await fetch(targetUrl, {
+      headers: {
+        "Referer": env.TRUSTED_REFERER || "https://facebook.com",
+        "User-Agent": request.headers.get("User-Agent")
+      }
+    });
 
-    const response = await fetch(targetUrl, { headers: modifiedHeaders });
-
-    // CSS to inject: Hides overlays, links, and "ugly" UI elements
     const customCSS = `
       <style>
-        /* Hide Sendvid's Ad Overlays & Promo Links */
-        .video-js .vjs-big-play-button, 
-        .ad-overlay, 
-        #video-overlay, 
-        .video-info-link,
-        .sendvid-logo,
-        a[href*="sendvid.com"] { 
-          display: none !important; 
-        }
+        /* HIDE EVERYTHING UGLY */
+        .video-js .vjs-big-play-button, .ad-overlay, #video-overlay, 
+        .video-info-link, .sendvid-logo, a[href*="sendvid.com"],
+        .sh-video-link, .video-details { display: none !important; opacity: 0 !important; pointer-events: none !important; }
 
-        /* Make the player fill the window properly */
-        body, html { margin: 0; padding: 0; overflow: hidden; background: #000; }
-        video { width: 100% !important; height: 100vh !important; object-fit: contain; }
-
-        /* Custom Play Button simulation if their JS fails */
-        .vjs-control-bar { display: flex !important; visibility: visible !important; opacity: 1 !important; }
+        /* FULLSCREEN PLAYER FIX */
+        body, html { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #000; }
+        video, .video-js { width: 100vw !important; height: 100vh !important; }
       </style>
     `;
 
+    // New Rewriter logic that hooks into BOTH 'head' and 'body' just in case
     const rewriter = new HTMLRewriter()
-      // Inject our custom "Beauty" CSS into the <head>
-      .on("head", {
-        element(e) {
-          e.append(customCSS, { html: true });
-        }
-      })
-      // Fix only ESSENTIAL video player scripts, NOT ad scripts
+      .on("head", { element(e) { e.append(customCSS, { html: true }); } })
+      .on("body", { element(e) { e.prepend(customCSS, { html: true }); } }) // Fallback
       .on("script", {
         element(e) {
           const src = e.getAttribute("src");
-          // Only fix the core video player (VideoJS), let others (ads) stay broken
-          if (src && (src.includes("video") || src.includes("player"))) {
-            if (src.startsWith("/")) e.setAttribute("src", "https://sendvid.com" + src);
+          if (src && src.startsWith("/") && (src.includes("video") || src.includes("player"))) {
+            e.setAttribute("src", "https://sendvid.com" + src);
           }
         }
       })
-      // Fix CSS paths for the player skin
       .on("link", {
         element(e) {
           const href = e.getAttribute("href");
@@ -57,20 +44,24 @@ export default {
         }
       });
 
-    let newResponse = rewriter.transform(response);
-    let outHeaders = new Headers(newResponse.headers);
+    const transformedResponse = rewriter.transform(response);
+    const newHeaders = new Headers(transformedResponse.headers);
 
-    // 1st-Party Cookie Logic
+    // 1st Party Cookie Fix
     const setCookie = response.headers.get("Set-Cookie");
     if (setCookie) {
-      const updatedCookie = setCookie.replace(/domain=[^;]+/, `domain=${url.hostname}`);
-      outHeaders.set("Set-Cookie", updatedCookie);
+      newHeaders.set("Set-Cookie", setCookie.replace(/domain=[^;]+/, `domain=${url.hostname}`));
     }
 
-    // Allow embedding in your Netlify <iframe>
-    outHeaders.set("X-Frame-Options", "ALLOWALL");
-    outHeaders.delete("Content-Security-Policy");
+    // Embed Security
+    newHeaders.set("X-Frame-Options", "ALLOWALL");
+    newHeaders.delete("Content-Security-Policy");
+    // Debug header to confirm THIS version is running
+    newHeaders.set("X-Worker-Version", "2.0-Beauty-Mode");
 
-    return new Response(newResponse.body, { ...newResponse, headers: outHeaders });
+    return new Response(transformedResponse.body, {
+      ...transformedResponse,
+      headers: newHeaders
+    });
   }
 };
