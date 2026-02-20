@@ -2,7 +2,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const targetUrl = url.searchParams.get("url");
-    if (!targetUrl) return new Response("v7.0 Interceptor Active", { status: 200 });
+    if (!targetUrl) return new Response("v8.0 Minimalist Active", { status: 200 });
 
     const response = await fetch(targetUrl, {
       headers: {
@@ -11,79 +11,74 @@ export default {
       }
     });
 
-    // 1. The Interceptor Script: Runs BEFORE preflight.js
     const interceptorJS = `
       <script>
-        // Kill the ability to open new windows (Pop-ups)
-        const originalOpen = window.open;
-        window.open = function() {
-          console.log("Blocked Pop-up Attempt");
-          return null; 
-        };
-
-        // Kill dynamic link creation (Common bypass for window.open)
+        // Kill Pop-ups and Ad-Redirects
+        window.open = function() { return null; };
         const originalCreateElement = document.createElement;
         document.createElement = function(tag) {
-          const element = originalCreateElement.call(document, tag);
+          const el = originalCreateElement.call(document, tag);
           if (tag.toLowerCase() === 'a') {
-            const originalSetAttribute = element.setAttribute;
-            element.setAttribute = function(name, value) {
-              if (name === 'href' && (value.includes('clickadu') || value.includes('gukahdbam'))) {
-                console.log("Blocked Ad Link: " + value);
-                return;
-              }
-              return originalSetAttribute.apply(element, arguments);
+            const setAttr = el.setAttribute;
+            el.setAttribute = function(n, v) {
+              if (n === 'href' && (v.includes('clickadu') || v.includes('gukahdbam'))) return;
+              return setAttr.apply(el, arguments);
             };
           }
-          return element;
+          return el;
         };
       </script>
     `;
 
     const customCSS = `
       <style>
-        /* Hide all identified logos and banners */
-        #vjs-logo-top-bar, #vjs-logobrand, .sendvid-logo, .sh-video-link,
-        .ad-overlay, #video-overlay, .video-info-link, .video-details { 
-          display: none !important; visibility: hidden !important; pointer-events: none !important; 
+        /* 1. Nuke Logos & Banners entirely */
+        #vjs-logo-top-bar, #vjs-logobrand, .sendvid-logo, .sh-video-link { display: none !important; }
+
+        /* 2. User Experience: Remove the big play button entirely */
+        /* Hiding it forces the player to rely on the background click or the bottom bar */
+        .vjs-big-play-button { display: none !important; opacity: 0 !important; pointer-events: none !important; }
+
+        /* 3. Force the player to show controls immediately so user can click 'Play' at the bottom */
+        .vjs-control-bar { 
+          display: flex !important; 
+          visibility: visible !important; 
+          opacity: 1 !important; 
+          z-index: 9999 !important; 
         }
+
+        /* 4. Fullscreen responsive layout */
         body, html { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #000; }
         .video-js { width: 100vw !important; height: 100vh !important; }
-        .vjs-big-play-button {
-          opacity: 0 !important; display: block !important;
-          width: 100% !important; height: 100% !important;
-          position: absolute !important; top: 0 !important; left: 0 !important; z-index: 1 !important;
-        }
-        .vjs-control-bar { z-index: 9999 !important; }
+        video { object-fit: contain; cursor: pointer; }
       </style>
     `;
 
     const rewriter = new HTMLRewriter()
-      // Inject Interceptor and CSS at the very top of <head>
-      .on("head", { 
-        element(e) { 
-          e.prepend(interceptorJS, { html: true }); 
-          e.append(customCSS, { html: true }); 
-        } 
-      })
-      // Delete the logo elements from the DOM
-      .on("#vjs-logo-top-bar", { element(e) { e.remove(); } })
-      .on("#vjs-logobrand", { element(e) { e.remove(); } })
-      // Fix relative paths for the core scripts
+      .on("head", { element(e) { 
+        e.prepend(interceptorJS, { html: true }); 
+        e.append(customCSS, { html: true }); 
+      }})
       .on("script", {
         element(e) {
           const src = e.getAttribute("src") || "";
-          if (src.startsWith("/")) {
-            e.setAttribute("src", "https://sendvid.com" + src);
+          // WHITELIST: Only fix/allow these 3 specific files
+          const isEssential = src.includes("preflight") || 
+                              src.includes("player-0.0.10.min.js") || 
+                              src.includes("player-c27304ea");
+          
+          if (isEssential) {
+            if (src.startsWith("/")) e.setAttribute("src", "https://sendvid.com" + src);
+          } else {
+            // Delete everything else (Clickadu, Adsmediabox, etc.)
+            e.remove();
           }
         }
       })
       .on("link", {
         element(e) {
           const href = e.getAttribute("href");
-          if (href && href.startsWith("/")) {
-            e.setAttribute("href", "https://sendvid.com" + href);
-          }
+          if (href && href.startsWith("/")) e.setAttribute("href", "https://sendvid.com" + href);
         }
       });
 
@@ -97,7 +92,7 @@ export default {
 
     newHeaders.set("X-Frame-Options", "ALLOWALL");
     newHeaders.delete("Content-Security-Policy");
-    newHeaders.set("X-Worker-Version", "7.0-Interceptor-Hook");
+    newHeaders.set("X-Worker-Version", "8.0-Triple-Whitelist");
 
     return new Response(transformedResponse.body, { ...transformedResponse, headers: newHeaders });
   }
