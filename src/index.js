@@ -1,4 +1,10 @@
-// index.js -- Proxy Worker v14.1 (Normalized Cache + Edge Protected)
+// index.js -- Proxy Worker v14.2 (Normalized Cache + Crash Protection)
+
+// 1. Added a headInjections variable that combines your CSS with a <script> block. 
+//    This script creates a fake videojs function so the page doesn't crash when it tries to initialize the player you deleted.
+
+// 2. Added a mockStore to the injection.
+//    This provides a "fake" storage area so the browser doesn't throw a security error when the proxied script tries to save session data.
 
 export default {
   async fetch(request, env, ctx) {
@@ -7,7 +13,7 @@ export default {
 
     // Default response if no URL is provided
     if (!targetUrl) {
-      return new Response("v14.1 Edge Cached Protected (Normalized)", { status: 200 });
+      return new Response("v14.2 Edge Cached Protected (Normalized)", { status: 200 });
     }
 
     /* ================= VALIDATION ================= */
@@ -19,9 +25,6 @@ export default {
     /* ================= CACHE NORMALIZATION ================= */
     
     const cache = caches.default;
-    
-    // We create a "Synthetic Key" that only includes the video URL.
-    // This ignores trackers like ?fbclid or ?utm_source, ensuring a Cache HIT.
     const normalizedKeyUrl = new URL(url.origin + url.pathname);
     normalizedKeyUrl.searchParams.set("url", targetUrl); 
     
@@ -37,7 +40,6 @@ export default {
     /* ================= FETCH SOURCE ================= */
 
     let response;
-
     try {
       response = await fetch(targetUrl, {
         headers: {
@@ -53,12 +55,11 @@ export default {
       return new Response("Invalid upstream response", { status: 502 });
     }
 
-    /* ================= CSS INJECTION ================= */
+    /* ================= SHIM & CSS INJECTION ================= */
 
-    const customCSS = `
+    const headInjections = `
       <style>
         body, html { margin: 0; padding: 0; background: #000; overflow: hidden; height: 100%; width: 100%; }
-
         video {
           display: block !important;
           width: 100vw !important;
@@ -66,25 +67,27 @@ export default {
           object-fit: contain !important;
           pointer-events: auto !important;
         }
-
         .vjs-control-bar, .vjs-big-play-button, .ad-overlay, #video-overlay,
         #vjs-logo-top-bar, #vjs-logobrand, .video-info-link {
           display: none !important;
           opacity: 0 !important;
         }
-
-        video::-internal-media-controls-download-button {
-          display: none !important;
-        }
-
-        video::-webkit-media-controls-enclosure {
-          overflow: hidden !important;
-        }
-
-        video::-webkit-media-controls-panel {
-          width: calc(100% + 35px) !important;
-        }
+        video::-internal-media-controls-download-button { display: none !important; }
+        video::-webkit-media-controls-enclosure { overflow: hidden !important; }
+        video::-webkit-media-controls-panel { width: calc(100% + 35px) !important; }
       </style>
+      <script>
+        // Silence ReferenceErrors for videojs
+        window.videojs = function() { 
+          return { ready: (fn) => fn(), on: () => {}, one: () => {}, dispose: () => {} }; 
+        };
+        // Silence DOMException for sessionStorage/localStorage
+        const mockStore = { getItem: () => null, setItem: () => {}, removeItem: () => {}, clear: () => {} };
+        try {
+          Object.defineProperty(window, 'sessionStorage', { value: mockStore });
+          Object.defineProperty(window, 'localStorage', { value: mockStore });
+        } catch(e) { console.warn("Storage shim skipped"); }
+      </script>
     `;
 
     /* ================= HTML REWRITE ================= */
@@ -92,7 +95,7 @@ export default {
     const rewriter = new HTMLRewriter()
       .on("head", {
         element(e) {
-          e.append(customCSS, { html: true });
+          e.append(headInjections, { html: true });
         }
       })
       .on("video", {
@@ -108,19 +111,10 @@ export default {
       .on("script", {
         element(e) {
           let src = e.getAttribute("src") || "";
+          if (src.startsWith("//")) e.setAttribute("src", "https:" + src);
+          else if (src.startsWith("/")) e.setAttribute("src", "https://sendvid.com" + src);
 
-          if (src.startsWith("//")) {
-            e.setAttribute("src", "https:" + src);
-          } else if (src.startsWith("/")) {
-            e.setAttribute("src", "https://sendvid.com" + src);
-          }
-
-          const isAd =
-            src.includes("ads") ||
-            src.includes("clickadu") ||
-            src.includes("gtag") ||
-            src.includes("gukahdbam");
-
+          const isAd = src.includes("ads") || src.includes("clickadu") || src.includes("gtag") || src.includes("gukahdbam");
           if (isAd || src.includes("player")) {
             e.remove();
           }
@@ -132,37 +126,22 @@ export default {
     /* ================= HEADERS & COOKIES ================= */
 
     const newHeaders = new Headers(transformed.headers);
-
-    // Cookie domain rewrite to keep the session within your domain
     const setCookie = response.headers.get("Set-Cookie");
     if (setCookie) {
-      newHeaders.set(
-        "Set-Cookie",
-        setCookie.replace(/domain=[^;]+/, `domain=${url.hostname}`)
-      );
+      newHeaders.set("Set-Cookie", setCookie.replace(/domain=[^;]+/, `domain=${url.hostname}`));
     }
 
     newHeaders.set("X-Frame-Options", "ALLOWALL");
     newHeaders.delete("Content-Security-Policy");
-
-    // 🔥 EDGE CACHE CONFIG
-    newHeaders.set(
-      "Cache-Control",
-      "public, max-age=86400, s-maxage=604800, stale-while-revalidate=86400"
-    );
-
-    newHeaders.set("X-Worker-Version", "14.1-Normalized");
+    newHeaders.set("Cache-Control", "public, max-age=86400, s-maxage=604800, stale-while-revalidate=86400");
+    newHeaders.set("X-Worker-Version", "14.2-Normalized-Protected");
 
     const finalResponse = new Response(transformed.body, {
       status: transformed.status,
       headers: newHeaders
     });
 
-    /* ================= CACHE STORE ================= */
-
-    // Save the transformed page using the Normalized Key
     ctx.waitUntil(cache.put(cacheKey, finalResponse.clone()));
-
     return finalResponse;
   }
 };
