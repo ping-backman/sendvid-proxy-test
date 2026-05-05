@@ -77,10 +77,7 @@ export default {
       headers: newHeaders
     });
 
-    ctx```
-
-### Summary of the UX improvement:
-1.  .waitUntil(cache.put(cacheKey, finalResponse.clone()));
+    ctx.waitUntil(cache.put(cacheKey, finalResponse.clone()));
     return finalResponse;
   }
 };
