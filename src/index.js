@@ -1,10 +1,13 @@
+// index.js -- Proxy Worker v14.1 (Normalized Cache + Edge Protected)
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const targetUrl = url.searchParams.get("url");
 
+    // Default response if no URL is provided
     if (!targetUrl) {
-      return new Response("v14.0 Edge Cached Protected", { status: 200 });
+      return new Response("v14.1 Edge Cached Protected (Normalized)", { status: 200 });
     }
 
     /* ================= VALIDATION ================= */
@@ -13,10 +16,18 @@ export default {
       return new Response("Invalid source", { status: 400 });
     }
 
+    /* ================= CACHE NORMALIZATION ================= */
+    
     const cache = caches.default;
-    const cacheKey = new Request(request.url);
+    
+    // We create a "Synthetic Key" that only includes the video URL.
+    // This ignores trackers like ?fbclid or ?utm_source, ensuring a Cache HIT.
+    const normalizedKeyUrl = new URL(url.origin + url.pathname);
+    normalizedKeyUrl.searchParams.set("url", targetUrl); 
+    
+    const cacheKey = new Request(normalizedKeyUrl.toString());
 
-    /* ================= CACHE HIT ================= */
+    /* ================= CACHE HIT CHECK ================= */
 
     let cached = await cache.match(cacheKey);
     if (cached) {
@@ -118,11 +129,11 @@ export default {
 
     const transformed = rewriter.transform(response);
 
-    /* ================= HEADERS ================= */
+    /* ================= HEADERS & COOKIES ================= */
 
     const newHeaders = new Headers(transformed.headers);
 
-    // Cookie rewrite
+    // Cookie domain rewrite to keep the session within your domain
     const setCookie = response.headers.get("Set-Cookie");
     if (setCookie) {
       newHeaders.set(
@@ -134,13 +145,13 @@ export default {
     newHeaders.set("X-Frame-Options", "ALLOWALL");
     newHeaders.delete("Content-Security-Policy");
 
-    // 🔥 EDGE CACHE (LONG-LIVED BUT SAFE)
+    // 🔥 EDGE CACHE CONFIG
     newHeaders.set(
       "Cache-Control",
       "public, max-age=86400, s-maxage=604800, stale-while-revalidate=86400"
     );
 
-    newHeaders.set("X-Worker-Version", "14.0-EdgeCached");
+    newHeaders.set("X-Worker-Version", "14.1-Normalized");
 
     const finalResponse = new Response(transformed.body, {
       status: transformed.status,
@@ -149,6 +160,7 @@ export default {
 
     /* ================= CACHE STORE ================= */
 
+    // Save the transformed page using the Normalized Key
     ctx.waitUntil(cache.put(cacheKey, finalResponse.clone()));
 
     return finalResponse;
