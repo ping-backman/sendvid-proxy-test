@@ -133,7 +133,7 @@ export default {
 
     newHeaders.set(
       "Cache-Control",
-      "public, max-age=86400, s-maxage=604800, stale-while-revalidate=86400"
+      "public, max-age=600, s-maxage=14400, stale-while-revalidate=86400"
     );
 
     newHeaders.set("X-Worker-Version", "15-Clean-Native");
